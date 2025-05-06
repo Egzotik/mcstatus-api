@@ -2,3 +2,4 @@ Flask
 mcstatus==5.1.1
 requests
 gunicorn
+flask-cors
