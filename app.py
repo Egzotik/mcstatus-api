@@ -95,7 +95,7 @@ def monitor_players():
             if len(activity_log) > 100:
                 activity_log = activity_log[-100:]
 
-        time.sleep(30)
+        time.sleep(1)
 
 # Запуск фонового потока
 threading.Thread(target=monitor_players, daemon=True).start()
