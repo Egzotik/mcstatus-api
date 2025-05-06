@@ -6,7 +6,7 @@ import requests
 app = Flask(__name__)
 
 # Включаем CORS для всего приложения
-CORS(app) #, resources={r"/api/*": {"origins": ["https://egzotik.github.io", "https://egzotik.github.io/mixmonitoring/"]}})
+CORS(app, resources={r"/api/*": {"origins": ["https://egzotik.github.io", "https://egzotik.github.io/mixmonitoring/"]}})
 
 SERVER_CONFIG = {
     "ip": "88.99.104.215",
@@ -21,6 +21,14 @@ def get_server_status():
         server = MinecraftServer(SERVER_CONFIG['ip'], SERVER_CONFIG['port'])
         query = server.query()  # Пробуем запросить игроков
 
+        if query:
+            # Если сервер доступен, добавляем MOTD как строку
+            motd = query.motd
+            print(f"Запрос успешен. MOTD: {motd}")
+        else:
+            motd = "Сервер недоступен"
+            print("Сервер недоступен")
+
         return {
             "status": "online" if query else "offline",  # Проверяем, доступен ли сервер
             "version": SERVER_CONFIG["version"],  # Просто фиксированная версия
@@ -28,11 +36,12 @@ def get_server_status():
                 "online": query.players.online if query else 0,
                 "max": SERVER_CONFIG["max_players"],
                 "list": query.players.names if query else []
-            }
+            },
+            "motd": motd  # MOTD теперь просто строка
         }
 
     except Exception as e:
-        print(f"Ошибка: {e}")  # Логируем ошибку для дебага
+        print(f"Ошибка при подключении: {e}")  # Логируем ошибку
         return {
             "status": "offline",
             "version": None,
@@ -40,7 +49,8 @@ def get_server_status():
                 "online": 0,
                 "max": SERVER_CONFIG["max_players"],
                 "list": []
-            }
+            },
+            "motd": "Ошибка подключения к серверу"  # Сообщение об ошибке
         }
 
 @app.route('/api/status')
