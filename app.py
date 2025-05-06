@@ -1,8 +1,12 @@
 from flask import Flask, jsonify, Response
+from flask_cors import CORS  # Импортируем Flask-CORS
 from mcstatus import MinecraftServer
 import requests
 
 app = Flask(__name__)
+
+# Включаем CORS для всего приложения
+CORS(app)
 
 SERVER_CONFIG = {
     "ip": "88.99.104.215",
