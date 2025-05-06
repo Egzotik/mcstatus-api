@@ -6,7 +6,7 @@ import requests
 app = Flask(__name__)
 
 # Включаем CORS для всего приложения
-CORS(app, origins=["https://egzotik.github.io/mixmonitoring/"])
+CORS(app)
 
 SERVER_CONFIG = {
     "ip": "88.99.104.215",
