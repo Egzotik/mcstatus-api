@@ -4,7 +4,8 @@ from mcstatus import MinecraftServer
 import requests
 import threading
 import time
-from datetime import datetime, timedelta
+from datetime import datetime, timezone
+
 
 app = Flask(__name__)
 CORS(app, resources={r"/api/*": {"origins": ["https://egzotik.github.io", "https://egzotik.github.io/mixmonitoring/"]}})
@@ -16,8 +17,7 @@ SERVER_CONFIG = {
     "max_players": 100
 }
 
-# Хранилище для логов и пиков
-activity_log = []  # [{'player': 'Nick', 'action': 'joined/left', 'time': datetime}]
+activity_log = []
 player_set = set()
 daily_peaks = {
     'today': 0,
@@ -25,24 +25,33 @@ daily_peaks = {
     'date': datetime.utcnow().date()
 }
 
-# Получение статуса сервера
 def get_server_status():
     try:
         server = MinecraftServer(SERVER_CONFIG['ip'], SERVER_CONFIG['port'])
-        query = server.query()
-        motd = query.motd if query else "Сервер недоступен"
+
+        try:
+            query = server.query()
+            motd = query.motd if query else "Сервер недоступен"
+            player_names = query.players.names if query and query.players.names else []
+            online_count = len(player_names)
+        except:
+            query = None
+            motd = "Query недоступен"
+            player_names = []
+            online_count = 0
+
         return {
             "status": "online" if query else "offline",
             "version": SERVER_CONFIG["version"],
             "players": {
-                "online": query.players.online if query else 0,
+                "online": online_count,
                 "max": SERVER_CONFIG["max_players"],
-                "list": query.players.names if query else []
+                "list": player_names
             },
             "motd": motd
         }
-    except Exception as e:
-        print(f"Ошибка при подключении: {e}")
+
+    except:
         return {
             "status": "offline",
             "version": None,
@@ -54,36 +63,35 @@ def get_server_status():
             "motd": "Ошибка подключения к серверу"
         }
 
-# Фоновый процесс мониторинга
 def monitor_players():
     global player_set, activity_log, daily_peaks
+
     while True:
         status = get_server_status()
         if status['status'] == 'online':
             current_players = set(status['players']['list'])
 
-            # Входы
             joined = current_players - player_set
             for player in joined:
                 activity_log.append({
                     'player': player,
                     'action': 'joined',
-                    'time': datetime.utcnow().isoformat()
+                    'time': datetime.now(timezone.utc).isoformat()
+
                 })
 
-            # Выходы
             left = player_set - current_players
             for player in left:
                 activity_log.append({
                     'player': player,
                     'action': 'left',
-                    'time': datetime.utcnow().isoformat()
+                    'time': datetime.now(timezone.utc).isoformat()
+
                 })
 
             player_set = current_players
 
-            # Обновление пика онлайна
-            today = datetime.utcnow().date()
+            today = datetime.now(timezone.utc).date()
             if daily_peaks['date'] != today:
                 daily_peaks['yesterday'] = daily_peaks['today']
                 daily_peaks['today'] = 0
@@ -91,13 +99,11 @@ def monitor_players():
 
             daily_peaks['today'] = max(daily_peaks['today'], len(current_players))
 
-            # Ограничим лог до 100 записей
             if len(activity_log) > 100:
                 activity_log = activity_log[-100:]
 
         time.sleep(1)
 
-# Запуск фонового потока
 threading.Thread(target=monitor_players, daemon=True).start()
 
 @app.route('/api/status')
@@ -115,7 +121,7 @@ def player_head(player_name):
 
 @app.route('/api/activity')
 def api_activity():
-    return jsonify(activity_log[-10:][::-1])  # последние 10 записей, в обратном порядке
+    return jsonify(activity_log[-10:][::-1])
 
 @app.route('/api/peak')
 def api_peak():
