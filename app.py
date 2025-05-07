@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 
 
 app = Flask(__name__)
-CORS(app, resources={r"/api/*": {"origins": ["https://egzotik.github.io", "https://egzotik.github.io/mixmonitoring/"]}})
+CORS(app) #, resources={r"/api/*": {"origins": ["https://egzotik.github.io", "https://egzotik.github.io/mixmonitoring/"]}})
 
 SERVER_CONFIG = {
     "ip": "88.99.104.215",
