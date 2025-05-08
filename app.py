@@ -104,7 +104,16 @@ def monitor_players():
 
         time.sleep(1)
 
+def self_ping():
+    while True:
+        try:
+            requests.get("https://mcstatus-api-iena.onrender.com/api/status")
+        except Exception as e:
+            print("Self-ping error:", e)
+        time.sleep(600)  # каждые 10 минут
+
 threading.Thread(target=monitor_players, daemon=True).start()
+threading.Thread(target=self_ping, daemon=True).start()
 
 @app.route('/api/status')
 def api_status():
