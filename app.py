@@ -21,7 +21,14 @@ CORS(app)
 DB_URL = os.getenv("DATABASE_URL")
 # Замените 'jdbc:mysql' на 'mysql' для использования с SQLAlchemy
 DB_URL = DB_URL.replace("jdbc:mysql", "mysql+mysqlconnector")
-engine = create_engine(DB_URL, pool_recycle=3600, pool_pre_ping=True)
+engine = create_engine(
+    DB_URL,
+    pool_recycle=280,  # чуть меньше, чем таймаут MySQL (обычно 300с)
+    pool_pre_ping=True,
+    pool_size=10,      # или нужное количество
+    max_overflow=5,    # сколько дополнительных соединений можно создать
+    pool_timeout=30    # сколько ждать соединения из пула
+)
 Session = sessionmaker(bind=engine)
 Base = declarative_base()
 
@@ -169,20 +176,29 @@ def api_activity():
                 "time": a.time.isoformat()
             } for a in activities
         ])
+    except SQLAlchemyError as e:
+        print("DB error in /api/activity:", e)
+        return jsonify({"error": "Database error"}), 500
     finally:
         session.close()
+
 
 @app.route('/api/peak')
 def api_peak():
     session = Session()
     try:
         today = session.get(Peak, date.today())
+        yesterday = session.get(Peak, date.today() - timedelta(days=1))
         return jsonify({
-            'today': today.today if today else 0,
-            'yesterday': today.yesterday if today else 0
+            "today": today.peak if today else 0,
+            "yesterday": yesterday.peak if yesterday else 0
         })
+    except SQLAlchemyError as e:
+        print("DB error in /api/peak:", e)
+        return jsonify({"error": "Database error"}), 500
     finally:
         session.close()
+
 
 if __name__ == '__main__':
     app.run(host="0.0.0.0", port=5000)
