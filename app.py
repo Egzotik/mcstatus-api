@@ -4,17 +4,23 @@ from mcstatus import MinecraftServer
 import requests
 import threading
 import time
-import os
 from datetime import datetime, timezone, date
 from sqlalchemy import create_engine, Column, Integer, String, Date, DateTime
 from sqlalchemy.orm import declarative_base, sessionmaker
 from sqlalchemy.exc import SQLAlchemyError
+import os
+from dotenv import load_dotenv
+
+# Загрузка переменных из .env файла
+load_dotenv()
 
 app = Flask(__name__)
 CORS(app)
 
 # ---------------- DATABASE CONFIG ---------------- #
-DB_URL = os.environ.get("DATABASE_URL")
+DB_URL = os.getenv("DATABASE_URL")
+# Замените 'jdbc:mysql' на 'mysql' для использования с SQLAlchemy
+DB_URL = DB_URL.replace("jdbc:mysql", "mysql+mysqlconnector")
 engine = create_engine(DB_URL, pool_recycle=3600, pool_pre_ping=True)
 Session = sessionmaker(bind=engine)
 Base = declarative_base()
@@ -36,10 +42,10 @@ Base.metadata.create_all(engine)
 
 # ---------------- SERVER CONFIG ---------------- #
 SERVER_CONFIG = {
-    "ip": "88.99.104.215",
-    "port": 25566,
-    "version": "1.5.2",
-    "max_players": 100
+    "ip": os.getenv("SERVER_IP"),
+    "port": int(os.getenv("SERVER_PORT")),
+    "version": os.getenv("SERVER_VERSION"),
+    "max_players": int(os.getenv("SERVER_MAX_PLAYERS"))
 }
 
 player_set = set()
