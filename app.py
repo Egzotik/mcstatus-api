@@ -4,12 +4,37 @@ from mcstatus import MinecraftServer
 import requests
 import threading
 import time
-from datetime import datetime, timezone
-
+import os
+from datetime import datetime, timezone, date
+from sqlalchemy import create_engine, Column, Integer, String, Date, DateTime
+from sqlalchemy.orm import declarative_base, sessionmaker
+from sqlalchemy.exc import SQLAlchemyError
 
 app = Flask(__name__)
-CORS(app) #, resources={r"/api/*": {"origins": ["https://egzotik.github.io", "https://egzotik.github.io/mixmonitoring/"]}})
+CORS(app)
 
+# ---------------- DATABASE CONFIG ---------------- #
+DB_URL = os.environ.get("DATABASE_URL")
+engine = create_engine(DB_URL, pool_recycle=3600, pool_pre_ping=True)
+Session = sessionmaker(bind=engine)
+Base = declarative_base()
+
+class Activity(Base):
+    __tablename__ = 'activity_log'
+    id = Column(Integer, primary_key=True)
+    player = Column(String(32))
+    action = Column(String(16))
+    time = Column(DateTime, default=datetime.utcnow)
+
+class Peak(Base):
+    __tablename__ = 'daily_peaks'
+    date = Column(Date, primary_key=True)
+    today = Column(Integer, default=0)
+    yesterday = Column(Integer, default=0)
+
+Base.metadata.create_all(engine)
+
+# ---------------- SERVER CONFIG ---------------- #
 SERVER_CONFIG = {
     "ip": "88.99.104.215",
     "port": 25566,
@@ -17,13 +42,7 @@ SERVER_CONFIG = {
     "max_players": 100
 }
 
-activity_log = []
 player_set = set()
-daily_peaks = {
-    'today': 0,
-    'yesterday': 0,
-    'date': datetime.utcnow().date()
-}
 
 def get_server_status():
     try:
@@ -64,43 +83,42 @@ def get_server_status():
         }
 
 def monitor_players():
-    global player_set, activity_log, daily_peaks
+    global player_set
 
     while True:
         status = get_server_status()
         if status['status'] == 'online':
             current_players = set(status['players']['list'])
-
             joined = current_players - player_set
-            for player in joined:
-                activity_log.append({
-                    'player': player,
-                    'action': 'joined',
-                    'time': datetime.now(timezone.utc).isoformat()
-
-                })
-
             left = player_set - current_players
-            for player in left:
-                activity_log.append({
-                    'player': player,
-                    'action': 'left',
-                    'time': datetime.now(timezone.utc).isoformat()
 
-                })
+            session = Session()
+            try:
+                for player in joined:
+                    session.add(Activity(player=player, action='joined', time=datetime.now(timezone.utc)))
+
+                for player in left:
+                    session.add(Activity(player=player, action='left', time=datetime.now(timezone.utc)))
+
+                today = date.today()
+                peak = session.get(Peak, today)
+                if not peak:
+                    # Перенос вчерашнего пика
+                    yesterday_peak = session.query(Peak).order_by(Peak.date.desc()).first()
+                    yesterday = yesterday_peak.today if yesterday_peak else 0
+                    peak = Peak(date=today, today=len(current_players), yesterday=yesterday)
+                    session.add(peak)
+                else:
+                    peak.today = max(peak.today, len(current_players))
+
+                session.commit()
+            except SQLAlchemyError as e:
+                print("DB error:", e)
+                session.rollback()
+            finally:
+                session.close()
 
             player_set = current_players
-
-            today = datetime.now(timezone.utc).date()
-            if daily_peaks['date'] != today:
-                daily_peaks['yesterday'] = daily_peaks['today']
-                daily_peaks['today'] = 0
-                daily_peaks['date'] = today
-
-            daily_peaks['today'] = max(daily_peaks['today'], len(current_players))
-
-            if len(activity_log) > 100:
-                activity_log = activity_log[-100:]
 
         time.sleep(1)
 
@@ -110,7 +128,7 @@ def self_ping():
             requests.get("https://mcstatus-api-iena.onrender.com/api/status")
         except Exception as e:
             print("Self-ping error:", e)
-        time.sleep(600)  # каждые 10 минут
+        time.sleep(600)
 
 threading.Thread(target=monitor_players, daemon=True).start()
 threading.Thread(target=self_ping, daemon=True).start()
@@ -130,14 +148,30 @@ def player_head(player_name):
 
 @app.route('/api/activity')
 def api_activity():
-    return jsonify(activity_log[-10:][::-1])
+    session = Session()
+    try:
+        activities = session.query(Activity).order_by(Activity.time.desc()).limit(10).all()
+        return jsonify([
+            {
+                "player": a.player,
+                "action": a.action,
+                "time": a.time.isoformat()
+            } for a in activities
+        ])
+    finally:
+        session.close()
 
 @app.route('/api/peak')
 def api_peak():
-    return jsonify({
-        'today': daily_peaks['today'],
-        'yesterday': daily_peaks['yesterday']
-    })
+    session = Session()
+    try:
+        today = session.get(Peak, date.today())
+        return jsonify({
+            'today': today.today if today else 0,
+            'yesterday': today.yesterday if today else 0
+        })
+    finally:
+        session.close()
 
 if __name__ == '__main__':
     app.run(host="0.0.0.0", port=5000)
