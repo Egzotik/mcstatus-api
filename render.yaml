@@ -3,5 +3,8 @@ services:
     name: mcstatus-api
     env: python
     plan: free
-    buildCommand: pip install -r requirements.txt
-    startCommand: python app.py
+    buildCommand: |
+      pip install -r requirements.txt
+      cp .env.example .env  # Если нужно копировать пример файла .env, если он есть
+    startCommand: gunicorn -b 0.0.0.0:5000 app:app  # Используем gunicorn для запуска приложения
+    autoDeploy: true  # Автоматически деплоить изменения
