@@ -3,5 +3,6 @@ mcstatus==5.1.1
 requests
 gunicorn
 flask-cors
-python-dotenv  # Добавим поддержку .env файлов
-mysql-connector-python  # Для работы с MySQL
+SQLAlchemy
+python-dotenv
+mysql-connector-python
