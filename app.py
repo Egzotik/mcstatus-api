@@ -91,6 +91,11 @@ def get_server_status():
 def monitor_players():
     global player_set
 
+    # Восстановим состояние игроков из последнего статуса
+    status = get_server_status()
+    if status['status'] == 'online':
+        player_set = set(status['players']['list'])
+
     while True:
         status = get_server_status()
         if status['status'] == 'online':
