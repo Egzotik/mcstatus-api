@@ -5,11 +5,12 @@ import requests
 import threading
 import time
 from datetime import datetime, timezone, date, timedelta
-from sqlalchemy import create_engine, Column, Integer, String, Date, DateTime
+from sqlalchemy import create_engine, Column, Integer, String, Date, DateTime, desc
 from sqlalchemy.orm import declarative_base, sessionmaker
 from sqlalchemy.exc import SQLAlchemyError
 import os
 from dotenv import load_dotenv
+import pytz
 
 # Загрузка переменных из .env файла
 load_dotenv()
@@ -44,11 +45,6 @@ class Peak(Base):
     today = Column(Integer, default=0)
     yesterday = Column(Integer, default=0)
 
-class LastSeen(Base):
-    __tablename__ = 'last_seen'
-    player = Column(String(32), primary_key=True)
-    last_seen = Column(DateTime, default=datetime.utcnow)
-
 Base.metadata.create_all(engine)
 
 # ---------------- SERVER CONFIG ---------------- #
@@ -60,6 +56,7 @@ SERVER_CONFIG = {
 }
 
 player_set = set()
+moscow_tz = pytz.timezone("Europe/Moscow")
 
 def get_server_status():
     try:
@@ -70,7 +67,6 @@ def get_server_status():
             query = server.query()
             elapsed = time.time() - start
             if elapsed > 3:
-                # Таймаут превышен, считаем оффлайн
                 return {
                     "status": "offline",
                     "version": None,
@@ -133,12 +129,6 @@ def monitor_players():
                 for player in joined:
                     session.add(Activity(player=player, action='joined', time=datetime.now(timezone.utc)))
 
-                    last = session.get(LastSeen, player)
-                    if last:
-                        last.last_seen = datetime.now(timezone.utc)
-                    else:
-                        session.add(LastSeen(player=player, last_seen=datetime.now(timezone.utc)))
-
                 for player in left:
                     session.add(Activity(player=player, action='left', time=datetime.now(timezone.utc)))
 
@@ -191,20 +181,32 @@ def player_head(player_name):
 def api_activity():
     session = Session()
     try:
-        activities = session.query(Activity).order_by(Activity.time.desc()).limit(10).all()
-        return jsonify([
-            {
-                "player": a.player,
-                "action": a.action,
-                "time": a.time.isoformat()
-            } for a in activities
-        ])
+        last_activities = session.query(Activity).order_by(Activity.time.desc()).limit(10).all()
+        players = [a.player for a in last_activities]
+
+        # Последнее время left-действий для игроков
+        last_seen_records = (
+            session.query(Activity.player, Activity.time)
+            .filter(Activity.action == 'left')
+            .order_by(desc(Activity.time))
+            .distinct(Activity.player)
+            .all()
+        )
+
+        last_seen = {
+            record.player: record.time.replace(tzinfo=timezone.utc).astimezone(moscow_tz).strftime('%d.%m.%Y %H:%M')
+            for record in last_seen_records
+        }
+
+        return jsonify({
+            "activity": {"players": players},
+            "last_seen": last_seen
+        })
     except SQLAlchemyError as e:
         print("DB error in /api/activity:", e)
         return jsonify({"error": "Database error"}), 500
     finally:
         session.close()
-
 
 @app.route('/api/peak')
 def api_peak():
@@ -218,23 +220,6 @@ def api_peak():
         })
     except SQLAlchemyError as e:
         print("DB error in /api/peak:", e)
-        return jsonify({"error": "Database error"}), 500
-    finally:
-        session.close()
-
-@app.route('/api/last_seen')
-def api_last_seen():
-    session = Session()
-    try:
-        results = session.query(LastSeen).order_by(LastSeen.last_seen.desc()).limit(20).all()
-        return jsonify([
-            {
-                "player": r.player,
-                "last_seen": r.last_seen.isoformat()
-            } for r in results
-        ])
-    except SQLAlchemyError as e:
-        print("DB error in /api/last_seen:", e)
         return jsonify({"error": "Database error"}), 500
     finally:
         session.close()
