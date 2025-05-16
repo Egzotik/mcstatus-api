@@ -4,7 +4,7 @@ from mcstatus import MinecraftServer
 import requests
 import threading
 import time
-from datetime import datetime, timezone, date
+from datetime import datetime, timezone, date, timedelta
 from sqlalchemy import create_engine, Column, Integer, String, Date, DateTime
 from sqlalchemy.orm import declarative_base, sessionmaker
 from sqlalchemy.exc import SQLAlchemyError
@@ -19,15 +19,14 @@ CORS(app)
 
 # ---------------- DATABASE CONFIG ---------------- #
 DB_URL = os.getenv("DATABASE_URL")
-# Замените 'jdbc:mysql' на 'mysql' для использования с SQLAlchemy
 DB_URL = DB_URL.replace("jdbc:mysql", "mysql+mysqlconnector")
 engine = create_engine(
     DB_URL,
-    pool_recycle=280,  # чуть меньше, чем таймаут MySQL (обычно 300с)
+    pool_recycle=280,
     pool_pre_ping=True,
-    pool_size=10,      # или нужное количество
-    max_overflow=5,    # сколько дополнительных соединений можно создать
-    pool_timeout=30    # сколько ждать соединения из пула
+    pool_size=10,
+    max_overflow=5,
+    pool_timeout=30
 )
 Session = sessionmaker(bind=engine)
 Base = declarative_base()
@@ -45,6 +44,11 @@ class Peak(Base):
     today = Column(Integer, default=0)
     yesterday = Column(Integer, default=0)
 
+class LastSeen(Base):
+    __tablename__ = 'last_seen'
+    player = Column(String(32), primary_key=True)
+    last_seen = Column(DateTime, default=datetime.utcnow)
+
 Base.metadata.create_all(engine)
 
 # ---------------- SERVER CONFIG ---------------- #
@@ -61,8 +65,23 @@ def get_server_status():
     try:
         server = MinecraftServer(SERVER_CONFIG['ip'], SERVER_CONFIG['port'])
 
+        start = time.time()
         try:
             query = server.query()
+            elapsed = time.time() - start
+            if elapsed > 3:
+                # Таймаут превышен, считаем оффлайн
+                return {
+                    "status": "offline",
+                    "version": None,
+                    "players": {
+                        "online": 0,
+                        "max": SERVER_CONFIG["max_players"],
+                        "list": []
+                    },
+                    "motd": "Сервер не отвечает (таймаут)"
+                }
+
             motd = query.motd if query else "Сервер недоступен"
             player_names = query.players.names if query and query.players.names else []
             online_count = len(player_names)
@@ -98,7 +117,6 @@ def get_server_status():
 def monitor_players():
     global player_set
 
-    # Восстановим состояние игроков из последнего статуса
     status = get_server_status()
     if status['status'] == 'online':
         player_set = set(status['players']['list'])
@@ -115,13 +133,18 @@ def monitor_players():
                 for player in joined:
                     session.add(Activity(player=player, action='joined', time=datetime.now(timezone.utc)))
 
+                    last = session.get(LastSeen, player)
+                    if last:
+                        last.last_seen = datetime.now(timezone.utc)
+                    else:
+                        session.add(LastSeen(player=player, last_seen=datetime.now(timezone.utc)))
+
                 for player in left:
                     session.add(Activity(player=player, action='left', time=datetime.now(timezone.utc)))
 
                 today = date.today()
                 peak = session.get(Peak, today)
                 if not peak:
-                    # Перенос вчерашнего пика
                     yesterday_peak = session.query(Peak).order_by(Peak.date.desc()).first()
                     yesterday = yesterday_peak.today if yesterday_peak else 0
                     peak = Peak(date=today, today=len(current_players), yesterday=yesterday)
@@ -190,8 +213,8 @@ def api_peak():
         today = session.get(Peak, date.today())
         yesterday = session.get(Peak, date.today() - timedelta(days=1))
         return jsonify({
-            "today": today.peak if today else 0,
-            "yesterday": yesterday.peak if yesterday else 0
+            "today": today.today if today else 0,
+            "yesterday": yesterday.yesterday if yesterday else 0
         })
     except SQLAlchemyError as e:
         print("DB error in /api/peak:", e)
@@ -199,6 +222,22 @@ def api_peak():
     finally:
         session.close()
 
+@app.route('/api/last_seen')
+def api_last_seen():
+    session = Session()
+    try:
+        results = session.query(LastSeen).order_by(LastSeen.last_seen.desc()).limit(20).all()
+        return jsonify([
+            {
+                "player": r.player,
+                "last_seen": r.last_seen.isoformat()
+            } for r in results
+        ])
+    except SQLAlchemyError as e:
+        print("DB error in /api/last_seen:", e)
+        return jsonify({"error": "Database error"}), 500
+    finally:
+        session.close()
 
 if __name__ == '__main__':
     app.run(host="0.0.0.0", port=5000)
